@@ -1,0 +1,111 @@
+name: Update Chocolatey Package
+
+on:
+  schedule:
+    - cron: "0 12 * * 2" # every Tuesday at noon UTC
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for new release
+        id: check
+        shell: pwsh
+        run: |
+          $release = Invoke-RestMethod https://api.github.com/repos/open-telemetry/opentelemetry-collector-releases/releases/latest
+          $release.name -match "v(.*)"
+          $latestVersion = $Matches[1]
+
+          [xml]$nuspec = Get-Content opentelemetry-collector-contrib/opentelemetry-collector-contrib.nuspec
+          $currentVersion = $nuspec.package.metadata.version
+
+          Write-Host "Current: $currentVersion | Latest: $latestVersion"
+
+          if ([version]$latestVersion -le [version]$currentVersion) {
+            Write-Host "Already up to date."
+            "update=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            return
+          }
+
+          $asset32 = $release.assets | Where-Object { $_.name -like 'otelcol-contrib*windows_x86.msi' } | Select-Object -First 1
+          $asset64 = $release.assets | Where-Object { $_.name -like 'otelcol-contrib*windows_x64.msi' } | Select-Object -First 1
+
+          if (-not $asset32 -or -not $asset64) {
+            Write-Host "::error::Missing Windows MSI assets in release v$latestVersion"
+            exit 1
+          }
+
+          "update=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "version=$latestVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "url32=$($asset32.browser_download_url)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "url64=$($asset64.browser_download_url)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Download and checksum
+        if: steps.check.outputs.update == 'true'
+        id: checksum
+        shell: pwsh
+        run: |
+          $tmp32 = "$env:TEMP\otelcol-contrib_x86.msi"
+          $tmp64 = "$env:TEMP\otelcol-contrib_x64.msi"
+
+          Invoke-WebRequest -Uri "${{ steps.check.outputs.url32 }}" -OutFile $tmp32 -UseBasicParsing
+          Invoke-WebRequest -Uri "${{ steps.check.outputs.url64 }}" -OutFile $tmp64 -UseBasicParsing
+
+          $hash32 = (Get-FileHash $tmp32 -Algorithm SHA256).Hash.ToLower()
+          $hash64 = (Get-FileHash $tmp64 -Algorithm SHA256).Hash.ToLower()
+
+          Write-Host "x86: $hash32"
+          Write-Host "x64: $hash64"
+
+          "checksum32=$hash32" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "checksum64=$hash64" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Update package files
+        if: steps.check.outputs.update == 'true'
+        shell: pwsh
+        run: |
+          $version = "${{ steps.check.outputs.version }}"
+          $url32 = "${{ steps.check.outputs.url32 }}"
+          $url64 = "${{ steps.check.outputs.url64 }}"
+          $checksum32 = "${{ steps.checksum.outputs.checksum32 }}"
+          $checksum64 = "${{ steps.checksum.outputs.checksum64 }}"
+
+          # Update chocolateyinstall.ps1
+          $installFile = "opentelemetry-collector-contrib/tools/chocolateyinstall.ps1"
+          $content = Get-Content $installFile -Raw
+          $content = $content -replace "(\`$url\s*=\s*)'[^']*'", "`${1}'$url32'"
+          $content = $content -replace "(\`$url64\s*=\s*)'[^']*'", "`${1}'$url64'"
+          $content = $content -replace "(\`$checksum\s*=\s*)'[^']*'", "`${1}'$checksum32'"
+          $content = $content -replace "(\`$checksum64\s*=\s*)'[^']*'", "`${1}'$checksum64'"
+          Set-Content $installFile $content -NoNewline
+
+          # Update nuspec
+          $nuspecFile = "opentelemetry-collector-contrib/opentelemetry-collector-contrib.nuspec"
+          [xml]$nuspec = Get-Content $nuspecFile
+          $nuspec.package.metadata.version = $version
+          $nuspec.package.metadata.releaseNotes = "https://github.com/open-telemetry/opentelemetry-collector-contrib/releases/tag/v$version"
+          $nuspec.Save((Resolve-Path $nuspecFile))
+
+      - name: Pack and push
+        if: steps.check.outputs.update == 'true'
+        shell: pwsh
+        run: |
+          $version = "${{ steps.check.outputs.version }}"
+          Push-Location opentelemetry-collector-contrib
+          choco pack
+          choco push "opentelemetry-collector-contrib.$version.nupkg" --source https://push.chocolatey.org/ --api-key "${{ secrets.CHOCOLATEY_API }}"
+          Pop-Location
+
+      - name: Commit version bump
+        if: steps.check.outputs.update == 'true'
+        shell: pwsh
+        run: |
+          $version = "${{ steps.check.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Update to v$version"
+          git push
