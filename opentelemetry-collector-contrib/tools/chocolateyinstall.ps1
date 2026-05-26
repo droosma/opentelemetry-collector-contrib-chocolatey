@@ -1,10 +1,10 @@
 
 $ErrorActionPreference = 'Stop';
 $toolsDir = "$(Split-Path -parent $MyInvocation.MyCommand.Definition)"
-$url = 'https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.152.0/otelcol-contrib_0.152.0_windows_x86.msi'
-$checksum = '29417f05f1c17152acf1e4f630a72e5e562d4e300efb8451ced50e21b1d1df79'
-$url64 = 'https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.152.0/otelcol-contrib_0.152.0_windows_x64.msi'
-$checksum64 = '4b21ce546c16cb2e7131dcc24233625ac25d33ce765112386aa05a9c57c352a1'
+$url = 'https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.153.0/otelcol-contrib_0.153.0_windows_x86.msi'
+$checksum = '1eac74a9ec99a76f434a05086b7d9951a77c61d8b92d0af04af316bf02ecd533'
+$url64 = 'https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.153.0/otelcol-contrib_0.153.0_windows_x64.msi'
+$checksum64 = '9aae2f38290673b9cf270195c60ad4ca54a2f3cf2ab8ecfc1b1979d849ebefbb'
 
 $packageArgs = @{
   packageName    = $env:ChocolateyPackageName
